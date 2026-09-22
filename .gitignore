@@ -1,0 +1,18 @@
+# Ignore all private files
+*private*
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# IDE project metadata
+.idea/
+.project
+.settings/
+
+# Local virtual environments
+.venv/
+venv/
+
+# Sample/scratch recordings produced by make_sample() and ad-hoc runs
+*.jsonl
