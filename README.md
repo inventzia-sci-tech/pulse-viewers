@@ -1,5 +1,7 @@
 # pulse-viewers
 
+**Inventzia's Pulse Run Viewer**
+
 Viewing utilities for Pulse applications.
 
 This repository hosts the viewers built over the artifacts a Pulse run leaves behind. It is a home
@@ -39,6 +41,11 @@ or failed recording as such, never present it as complete.
 
 - `schema/`: the authoritative contracts (JSON Schema 2020-12). Currently
   `event-record.schema.json`, the record kinds `header` / `event` / `trailer`.
+- `run_browser.py`: the run picker, shared by every viewer — choosing a run is not specific to any
+  one of them. Lists what `list_runs()` finds under the output root and classifies each run's health
+  (`ok` / `partial` / `broken` / `running` / `unknown`) from its manifest, keeping the engine outcome
+  and the recording outcome separate. Run it directly (`python run_browser.py [--root PATH]`) for a
+  console listing with no Qt needed.
 - `reference/run_layout.py`: the Pulse output layout in one place — resolve `$PULSE_OUTPUT`, create
   and finalize run directories, read manifests, and `list_runs()` to enumerate every run under the
   root, newest first. The Java mirror of this lives in pulse-beacon as `RunLayout`; the two are kept
@@ -67,14 +74,38 @@ pip install -r requirements.txt
 Reads one run's event recording and shows the dispatch stream.
 
 ```bash
-python event_viewer.py [recording.jsonl]   # defaults to a generated /tmp/pulse-sample.jsonl
+python event_viewer.py                     # browse $PULSE_OUTPUT and pick a run
+python event_viewer.py --root PATH         # browse a specific output root
+python event_viewer.py recording.jsonl     # open one recording directly
 ```
+
+With no argument it opens the **run browser**, which is the application's hub rather than a one-shot
+picker: it stays open, and each run you open gets **its own detached window**, so several runs can be
+compared side by side. Closing a viewer leaves the browser and the other viewers alone, and closing
+the browser leaves the viewers open; `Run browser...` in any viewer brings it back.
+
+A run is chosen by what it is — app, time, health — rather than by remembering a path. The chosen
+run's verdict travels into its window's header bar, where the engine outcome and the recording
+outcome stay separate and a partial capture is labelled partial. A recording opened as a bare
+`.jsonl` has no manifest, so its health comes from the trailer instead.
+
+Only the two columns that carry meaning are coloured: the tier (grey for `historical`, blue for
+`live`) and the health verdict. Both palettes follow the desktop theme.
+
+The output root can be chosen in the browser itself (`Change output folder...`) and is remembered
+between sessions, so nothing has to be configured before the first launch; a remembered choice takes
+precedence over `$PULSE_OUTPUT`, and an explicit `--root` over both. `Open recording file...` opens a
+single `events.jsonl` from anywhere.
 
 It validates the recording (diagnostics to the console, run metadata in the header bar), shows the
 events newest-first by dispatch `seq`, colours each data type, and opens the selected event's
 payload in a detail tree. Filter by topic, key, type, a `seq` range, or free text; click a column
 header to sort (sorting by `type` groups by type and orders by `seq` within). Bounded retention,
 batched inserts, and lazy payload parsing are in place for the larger recordings of later phases.
+
+There is no synthetic fallback: if a recording is needed without a JVM, generate one explicitly with
+`python reference/event_record.py`, which writes into the platform's temp directory (pass a path to
+choose your own).
 
 ### The recording contract
 
@@ -94,7 +125,7 @@ parsing the payload; unknown types stay fully inspectable as generic JSON.
 **Python (no JVM), for viewer development:**
 
 ```bash
-python reference/event_record.py /tmp/pulse-sample.jsonl
+python reference/event_record.py [outfile.jsonl]   # defaults to the platform temp directory
 ```
 
 **Java:** the recorder now ships in pulse-beacon as
@@ -123,10 +154,9 @@ left unchanged (backward compatible); recording is a new, separate writer.
 
 ### Next
 
-`recording contract -> offline viewer -> run browser -> live file following`. Done through the
-offline viewer; next is browsing the output root via `list_runs()` and surfacing each run's health,
-then phase 3, live file following (tail a recording as it is written) with the reader contract from
-viewer.md section 5.
+`recording contract -> offline viewer -> run browser -> live file following`. Done through the run
+browser; next is phase 3, live file following (tail a recording as it is written) with the reader
+contract from viewer.md section 5.
 
 ---
 
@@ -136,8 +166,13 @@ Dual-licensed: GNU Affero General Public License v3.0 (see [LICENSE-AGPL-3.0](LI
 a commercial license from Inventzia Science and Technology Ltd. (see
 [LICENSE-COMMERCIAL.txt](LICENSE-COMMERCIAL.txt) and [COMMERCIAL.md](COMMERCIAL.md)).
 
-Third-party components are recorded in [NOTICE](NOTICE) — note that PySide6 is used under the LGPL,
-which carries its own obligations to recipients.
+Third-party components are recorded in [NOTICE](NOTICE). **Packaging note:** PySide6 is LGPL, and
+those obligations attach only to *distributing* it — declaring it as a dependency (a wheel on PyPI, a
+conda recipe) ships a name, not the library, so nothing is owed; bundling Qt's binaries into a frozen
+build (PyInstaller and friends) does convey it, and then the licence texts, the notice, and the
+recipient's right to relink against their own Qt all apply. Also prefer non-Qt charting (pyqtgraph,
+matplotlib): some Qt modules, Qt Charts among them, are GPL-or-commercial rather than LGPL, and GPL
+would reach our own code.
 
 Contributions require a DCO sign-off (`git commit -s`); see [CLA.md](CLA.md). Security reports:
 [SECURITY.md](SECURITY.md).

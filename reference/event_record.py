@@ -341,7 +341,10 @@ def make_sample(path: str | Path, events: int = 200) -> Path:
 
 if __name__ == "__main__":
     import sys
-    out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/pulse-sample.jsonl"
+    import tempfile
+    # The default lands in the platform's own temp directory: "/tmp" is not a path on Windows,
+    # where it resolves to C:\tmp and is not created.
+    out = sys.argv[1] if len(sys.argv) > 1 else str(Path(tempfile.gettempdir()) / "pulse-sample.jsonl")
     p = make_sample(out)
     rep = validate(p)
     print(f"wrote {p}: events={rep.event_count} ok={rep.ok} status={rep.trailer and rep.trailer['status']}")

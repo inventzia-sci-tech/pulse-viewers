@@ -7,7 +7,13 @@ Reads a completed recording (JSONL, see schema/event-record.schema.json), valida
 contract, and shows the events in a sortable, filterable grid with per-type colour and a payload
 detail tree. Qt only; no engine, no JVM, no domain adapters. Live following is phase 3.
 
-    python event_viewer.py [recording.jsonl]
+With no argument it opens the run browser over the Pulse output root, so a run is chosen by what it
+is rather than by remembering a path. A run's health travels with it into the header bar: the engine
+outcome and the recording outcome stay separate, and a partial capture is labelled as partial.
+
+    python event_viewer.py                    # browse $PULSE_OUTPUT
+    python event_viewer.py --root PATH        # browse a specific output root
+    python event_viewer.py recording.jsonl    # open one recording directly
 """
 
 from __future__ import annotations
@@ -19,12 +25,15 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "reference"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import event_record as er  # noqa: E402
+import run_browser as rb  # noqa: E402
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt)  # noqa: E402
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QSpinBox, QSplitter,
+    QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QSpinBox,
+    QSplitter,
     QTableView, QTreeView, QVBoxLayout, QWidget,
 )
 
@@ -35,10 +44,20 @@ DEFAULT_MAX_ROWS = 500_000
 
 
 def type_color(type_id: str) -> QColor:
-    """Stable light pastel per typeId (same type, same colour across sessions)."""
+    """Stable per-typeId background (same type, same hue across sessions), matched to the theme.
+
+    Lightness follows the theme rather than being fixed: a pale pastel under a dark theme leaves the
+    theme's light text on a light cell, which is unreadable. Pair every call with `type_text_color`.
+    """
     h = (hash(type_id) % 360) / 360.0
-    r, g, b = colorsys.hls_to_rgb(h, 0.88, 0.55)  # high lightness so black text stays readable
+    lightness = 0.26 if rb.palette_is_dark() else 0.88
+    r, g, b = colorsys.hls_to_rgb(h, lightness, 0.55)
     return QColor(int(r * 255), int(g * 255), int(b * 255))
+
+
+def type_text_color() -> QColor:
+    """The text colour that stays readable on `type_color`'s background."""
+    return QColor(0xEC, 0xEC, 0xEC) if rb.palette_is_dark() else QColor(0x1A, 0x1A, 0x1A)
 
 
 def _short_type(type_id: str) -> str:
@@ -65,6 +84,12 @@ class EventTableModel(QAbstractTableModel):
         super().__init__()
         self._rows: list[dict] = []
         self._max_rows = max_rows
+
+    def clear(self) -> None:
+        """Drop every row (opening another run reuses the window)."""
+        self.beginResetModel()
+        self._rows.clear()
+        self.endResetModel()
 
     def append_events(self, events: list[dict]) -> None:
         if not events:
@@ -101,6 +126,8 @@ class EventTableModel(QAbstractTableModel):
             return rec
         if role == Qt.BackgroundRole and col == COL_TYPE:
             return type_color(rec.get("typeId", ""))
+        if role == Qt.ForegroundRole and col == COL_TYPE:
+            return type_text_color()      # set with the background, or the theme wins and clashes
         if role == Qt.ToolTipRole and col == COL_TYPE:
             return rec.get("typeId", "")
         if role in (Qt.DisplayRole, Qt.EditRole):
@@ -196,9 +223,12 @@ def build_payload_tree(record: dict) -> QStandardItemModel:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str | None = None, run: dict | None = None,
+                 root: str | None = None, controller: "ViewerApp | None" = None) -> None:
         super().__init__()
-        self.setWindowTitle("Pulse Events Viewer")
+        self.setWindowTitle(rb.APP_NAME)
+        self._root = root
+        self._controller = controller
 
         self.model = EventTableModel()
         self.proxy = EventFilterProxy()
@@ -218,6 +248,12 @@ class MainWindow(QMainWindow):
         self.meta = QLabel("no recording loaded")
         self.meta.setWordWrap(True)
 
+        # Run health, kept on its own line and colour-coded: it is the first thing to read about a
+        # recording, and must never be lost among the metadata.
+        self.health = QLabel()
+        self.health.setWordWrap(True)
+        self.health.setVisible(False)
+
         # filter controls
         self.cb_topic = QComboBox(); self.cb_key = QComboBox(); self.cb_type = QComboBox()
         for cb in (self.cb_topic, self.cb_key, self.cb_type):
@@ -228,7 +264,12 @@ class MainWindow(QMainWindow):
         for sp in (self.seq_min, self.seq_max):
             sp.setRange(0, 2_000_000_000); sp.valueChanged.connect(self._apply_filters)
 
+        self.btn_open = QPushButton("Run browser...")
+        self.btn_open.setToolTip("Show the run browser; runs open in their own windows")
+        self.btn_open.clicked.connect(self.browse_runs)
+
         controls = QHBoxLayout()
+        controls.addWidget(self.btn_open)
         for lbl, w in (("topic", self.cb_topic), ("key", self.cb_key), ("type", self.cb_type),
                        ("seq >=", self.seq_min), ("seq <=", self.seq_max)):
             controls.addWidget(QLabel(lbl)); controls.addWidget(w)
@@ -241,21 +282,65 @@ class MainWindow(QMainWindow):
 
         central = QWidget(); layout = QVBoxLayout(central)
         layout.addWidget(self.meta)
+        layout.addWidget(self.health)
         layout.addLayout(controls)
         layout.addWidget(split, 1)
         self.setCentralWidget(central)
         self.resize(1100, 760)
 
-        self.load(path)
+        # The window exists before any recording does, so browsing never leaves the application
+        # without a window and picking a run replaces the contents rather than the window.
+        if path is not None:
+            self.load(path, run)
+        else:
+            self.meta.setText("No recording loaded &mdash; use <b>Open run...</b>")
 
     # ----------------------------------------------------------------
-    def load(self, path: str) -> None:
+    def browse_runs(self) -> None:
+        """Bring the run browser forward. It is a separate, persistent window, and runs opened from
+        it get their own viewer window, so this never disturbs what is already on screen."""
+        if self._controller is not None:
+            self._controller.show_browser()
+
+    def load(self, path: str, run: dict | None = None) -> None:
+        self.model.clear()
         report = er.validate(path)
         events = list(er.read(path))
         self.model.append_events(events)
         self.proxy.sort(COL_SEQ, Qt.DescendingOrder)   # newest first
         self._populate_filters(events)
         self._show_meta(path, report, len(events))
+        self._show_health(run, report, len(events))
+        # Product name first, then what this particular window holds, so several open windows are
+        # still tellable apart in a taskbar that truncates.
+        subject = f"{run['app']} / {run['runId']}" if run else Path(path).name
+        self.setWindowTitle(f"{rb.APP_NAME} - {subject}")
+
+    def _show_health(self, run: dict | None, report: er.Report, n: int) -> None:
+        """Surface the run's own verdict. Without a manifest (a bare .jsonl) fall back to the
+        recording's trailer, which carries the same accounting."""
+        if run is None:
+            trailer = report.trailer or {}
+            if not trailer:
+                self.health.setVisible(False)
+                return
+            counts = {k: trailer.get(k, 0) for k in
+                      ("observed", "events", "overflow", "serializationErrors", "abandoned")}
+            run = {"runStatus": "completed", "recordingStatus": trailer.get("status"),
+                   "counts": counts, "_has_manifest": True}
+        verdict, why = rb.health(run)
+        bg, fg = rb.verdict_colors(verdict)
+        badge = "background:#%02X%02X%02X; color:#%02X%02X%02X" % (*bg, *fg)
+        self.health.setText(
+            f"<span style='{badge}'>&nbsp;<b>{verdict.upper()}</b>&nbsp;</span> "
+            f"{why} &mdash; {rb.describe(run)}")
+        self.health.setVisible(True)
+        # The grid shows only what was recorded; say so when that is less than what ran.
+        lost = rb.lost_events(run.get("counts"))
+        if lost:
+            print(f"warning: {lost} observed event(s) are absent from this recording; "
+                  f"the grid shows {n} of {(run.get('counts') or {}).get('observed', '?')}",
+                  file=sys.stderr)
 
     def _populate_filters(self, events: list[dict]) -> None:
         topics = sorted({e.get("topic", "") for e in events})
@@ -311,13 +396,70 @@ class MainWindow(QMainWindow):
         self.meta.setText("   |   ".join(parts))
 
 
+class ViewerApp:
+    """Owns the run browser and one viewer window per opened run.
+
+    The browser is a standing window rather than a modal step, and each run gets its own detached
+    viewer, so several runs can be compared side by side. Windows are held here because Qt does not
+    own them: dropping the last Python reference would destroy a window that is still on screen.
+    """
+
+    def __init__(self, root: str | None = None) -> None:
+        self.root = root
+        self.browser = None
+        self.windows: list[MainWindow] = []
+
+    def show_browser(self) -> None:
+        """Show the browser, creating it on first use, and raise it if already open."""
+        if self.browser is None:
+            self.browser = rb.make_browser(self.root, on_open=self.open_run)
+        self.browser.show()
+        self.browser.raise_()
+        self.browser.activateWindow()
+
+    def open_run(self, run: dict) -> None:
+        """Open one run in a new window. A loose file has no manifest, so it carries no run dict."""
+        self.open_path(str(run["_events_path"]), None if run.get("_loose") else run)
+
+    def open_path(self, path: str, run: dict | None = None) -> MainWindow:
+        win = MainWindow(path, run, self.root, self)
+        # Cascade slightly so a second window does not land exactly on the first.
+        offset = 28 * (len(self.windows) % 8)
+        win.move(win.x() + offset, win.y() + offset)
+        win.show()
+        win.raise_()
+        self.windows.append(win)
+        win.destroyed.connect(lambda *_: self._forget(win))
+        return win
+
+    def _forget(self, win) -> None:
+        if win in self.windows:
+            self.windows.remove(win)
+
+
 def main() -> int:
-    path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/pulse-sample.jsonl"
-    if not Path(path).exists():
-        er.make_sample(path)   # convenience for a first run
+    argv = sys.argv[1:]
+    root: str | None = None
+    if argv and argv[0] == "--root":
+        if len(argv) < 2:
+            print("--root needs a path", file=sys.stderr)
+            return 2
+        root, argv = argv[1], argv[2:]
+    path = argv[0] if argv else None
+
+    if path is not None and not Path(path).exists():
+        print(f"no such recording: {path}", file=sys.stderr)
+        return 2
+
     app = QApplication(sys.argv)
-    win = MainWindow(path)
-    win.show()
+    app.setApplicationName(rb.APP_NAME)          # taskbar / window-manager identity
+    app.setOrganizationName("Inventzia")
+    viewer = ViewerApp(root)
+
+    if path is None:
+        viewer.show_browser()             # the browser is the hub; runs open beside it
+    else:
+        viewer.open_path(path)            # a named recording opens straight into its own window
     return app.exec()
 
 

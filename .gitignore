@@ -16,3 +16,6 @@ venv/
 
 # Sample/scratch recordings produced by make_sample() and ad-hoc runs
 *.jsonl
+
+# Claude Code local settings
+.claude/
