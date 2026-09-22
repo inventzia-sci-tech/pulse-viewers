@@ -10,7 +10,7 @@
 # Usage (enrich the same `pulse` env, same pattern as pulse-beacon):
 #   conda env update -f py_environment.yml
 #
-# After this: `python viewer.py [recording.jsonl]` runs the offline viewer.
+# After this: `python event_viewer.py [recording.jsonl]` runs the offline viewer.
 
 name: pulse
 channels:

@@ -2,11 +2,12 @@
 # Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
 """Pulse Events Viewer, phase 2 (offline).
 
+One of the viewers hosted in pulse-viewers; this one reads the event recording a Pulse run writes.
 Reads a completed recording (JSONL, see schema/event-record.schema.json), validates it against the
 contract, and shows the events in a sortable, filterable grid with per-type colour and a payload
 detail tree. Qt only; no engine, no JVM, no domain adapters. Live following is phase 3.
 
-    python viewer.py [recording.jsonl]
+    python event_viewer.py [recording.jsonl]
 """
 
 from __future__ import annotations

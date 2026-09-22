@@ -1,0 +1,24 @@
+pulse-viewers
+Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
+
+This product is dual-licensed under the GNU Affero General Public License v3.0
+(see LICENSE-AGPL-3.0) and a commercial license from Inventzia Science and
+Technology Ltd. (see LICENSE-COMMERCIAL.txt).
+
+-------------------------------------------------------------------------------
+Third-party components
+-------------------------------------------------------------------------------
+
+This product may include software developed by third parties. Each such
+component remains under its own license. The list below must be updated as
+dependencies are added or removed.
+
+  PySide6 (Qt for Python)
+      LGPL v3 / GPL v2+ / commercial, at the user's option, from The Qt Company.
+      Used by the desktop viewers only. Linked dynamically and not modified, so
+      the LGPL option applies; a viewer distributed under the Inventzia
+      commercial license still carries PySide6 under its own terms, and
+      recipients keep the LGPL right to relink against their own Qt build.
+
+  jsonschema
+      MIT license. Used to validate recordings against the record schema.

@@ -1,0 +1,22 @@
+Commercial License Agreement
+
+Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
+
+This software is available under a dual licensing model:
+
+1. Open Source License:
+   This software is available under the GNU Affero General Public License v3.0.
+   See the LICENSE-AGPL-3.0 file for details.
+
+2. Commercial License:
+   For organizations that wish to use this software without the obligations
+   imposed by the AGPL (including the requirement to open source derivative
+   works), a commercial license is available.
+
+   Under the commercial license, you are granted the rights to:
+   - Use this software in proprietary/commercial applications.
+   - Modify and distribute this software without the copyleft requirements of AGPL.
+   - Receive optional support and warranty (if offered).
+
+To obtain a commercial license, please contact:
+operations@inventzia.com
