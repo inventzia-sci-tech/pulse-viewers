@@ -1,0 +1,4 @@
+# Pulse Events Viewer (pulse-viewer) dependencies.
+# Deliberately separate from pulse-data / pulse-beacon: Qt never enters the engine.
+PySide6>=6.6
+jsonschema>=4.0

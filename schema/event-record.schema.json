@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inventzia.com/pulse/event-record.schema.json",
+  "title": "Pulse event recording record (v1)",
+  "description": "One JSON object per line (JSONL). A recording is a single 'header' line, then any number of 'event' lines ordered by seq, then an optional 'trailer' line. Discriminated by the 'kind' field.",
+  "oneOf": [
+    { "$ref": "#/$defs/header" },
+    { "$ref": "#/$defs/event" },
+    { "$ref": "#/$defs/trailer" }
+  ],
+  "$defs": {
+    "header": {
+      "type": "object",
+      "description": "Run metadata, written once as the first line.",
+      "required": ["kind", "v", "runId", "operatingMode", "window"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "header" },
+        "v": { "type": "integer", "minimum": 1, "description": "Envelope version." },
+        "runId": { "type": "string", "minLength": 1 },
+        "recorder": { "type": "string", "description": "Recorder name/version that produced this file." },
+        "recordedAt": { "type": "string", "format": "date-time", "description": "Wall-clock instant recording began." },
+        "source": { "type": "string", "description": "Source identity, e.g. engine name or host." },
+        "operatingMode": { "type": "string", "enum": ["COMPRESSED_TIME", "REAL_TIME", "UNDEFINED"] },
+        "window": {
+          "type": "object",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": { "type": "integer", "description": "Run window start, epoch millis." },
+            "end": { "type": "integer", "description": "Run window end, epoch millis." }
+          }
+        },
+        "typeFingerprint": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Composite datum-type fingerprint from RunInfo, or null if unverifiable."
+        },
+        "providerIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "event": {
+      "type": "object",
+      "description": "One dispatched event. 'seq' is the authoritative order (dispatch order); timestamps are for display, not ordering.",
+      "required": ["kind", "v", "runId", "seq", "eventTime", "topic", "key", "typeId", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "event" },
+        "v": { "type": "integer", "minimum": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "seq": { "type": "integer", "minimum": 0, "description": "Per-run monotonic dispatch sequence. Gaps indicate dropped records." },
+        "observedAt": { "type": "string", "format": "date-time", "description": "Wall-clock instant the tap saw the event (not gateway receipt time). Meaningful in real time; informational in compressed-time replay." },
+        "eventTime": { "type": "integer", "description": "datum.getDatumTime(), epoch millis." },
+        "topic": { "type": "string" },
+        "key": { "type": "string", "description": "datum.getDatumKey()." },
+        "typeId": { "type": "string", "description": "datum TYPE_ID; used for filtering and colour without parsing the payload." },
+        "payload": { "type": "object", "description": "The datum serialized as a JSON object (its fields). typeId + payload together are equivalent to tagged JSON, flattened." }
+      }
+    },
+    "trailer": {
+      "type": "object",
+      "description": "Final line with completion status and full accounting, so a failed or lossy recording cannot look complete. Identity: observed = events + overflow + serializationErrors + abandoned.",
+      "required": ["kind", "v", "runId", "status", "observed", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "trailer" },
+        "v": { "type": "integer", "minimum": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["complete", "failed", "interrupted"], "description": "How the recording ended." },
+        "observed": { "type": "integer", "minimum": 0, "description": "Total events the tap saw." },
+        "events": { "type": "integer", "minimum": 0, "description": "Events successfully written." },
+        "overflow": { "type": "integer", "minimum": 0, "description": "Dropped by observer-queue overflow." },
+        "serializationErrors": { "type": "integer", "minimum": 0, "description": "Events that failed to serialize and were skipped." },
+        "abandoned": { "type": "integer", "minimum": 0, "description": "Observed but neither written, overflowed, nor serialization-failed (queued-but-unwritten, or rejected after stop or failure)." }
+      }
+    }
+  }
+}

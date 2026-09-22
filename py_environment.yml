@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-Inventzia-Commercial
+# Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
+
+# Enrichment layer of the shared `pulse` conda environment, for the Pulse Events Viewer.
+#
+# This file does NOT stand alone: it adds the viewer's extra packages on top of the `pulse` env
+# (created from pulse-data's base, enriched by pulse-beacon). The viewer reads recordings only, so it
+# needs no JDK and no JPype; Qt is kept entirely out of the engine environments.
+#
+# Usage (enrich the same `pulse` env, same pattern as pulse-beacon):
+#   conda env update -f py_environment.yml
+#
+# After this: `python viewer.py [recording.jsonl]` runs the offline viewer.
+
+name: pulse
+channels:
+  - conda-forge
+dependencies:
+  - pip
+  - pip:
+      - PySide6>=6.6     # Qt GUI toolkit (bundles Qt; the only heavy viewer dependency)
+      - jsonschema>=4    # validate recordings against schema/event-record.schema.json
