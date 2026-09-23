@@ -27,15 +27,19 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(Path(__file__).resolve().parent / "reference"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import event_record as er  # noqa: E402
+import live_tail as lt  # noqa: E402
 import run_browser as rb  # noqa: E402
 
-from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt)  # noqa: E402
+from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt,  # noqa: E402
+                            QTimer)
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QSpinBox,
     QSplitter,
     QTableView, QTreeView, QVBoxLayout, QWidget,
 )
+
+POLL_MS = 400          # how often a followed recording is checked for new bytes
 
 COLUMNS = ["seq", "observed", "event time", "key", "topic", "type", "payload"]
 COL_SEQ, COL_OBSERVED, COL_EVENTTIME, COL_KEY, COL_TOPIC, COL_TYPE, COL_PAYLOAD = range(7)
@@ -224,11 +228,20 @@ def build_payload_tree(record: dict) -> QStandardItemModel:
 
 class MainWindow(QMainWindow):
     def __init__(self, path: str | None = None, run: dict | None = None,
-                 root: str | None = None, controller: "ViewerApp | None" = None) -> None:
+                 root: str | None = None, controller: "ViewerApp | None" = None,
+                 follow: bool = False) -> None:
         super().__init__()
         self.setWindowTitle(rb.APP_NAME)
         self._root = root
         self._controller = controller
+        self._path: str | None = None
+        self._run: dict | None = None
+        self._follower: lt.RecordingFollower | None = None
+        self._known: dict[str, set] = {"topic": set(), "key": set(), "typeId": set()}
+        self._seq_auto = True
+        self._timer = QTimer(self)
+        self._timer.setInterval(POLL_MS)
+        self._timer.timeout.connect(self._poll_live)
 
         self.model = EventTableModel()
         self.proxy = EventFilterProxy()
@@ -263,13 +276,25 @@ class MainWindow(QMainWindow):
         self.seq_min = QSpinBox(); self.seq_max = QSpinBox()
         for sp in (self.seq_min, self.seq_max):
             sp.setRange(0, 2_000_000_000); sp.valueChanged.connect(self._apply_filters)
+        # Only a user edit reaches this: programmatic updates block the signal.
+        self.seq_max.valueChanged.connect(self._on_seq_max_edited)
 
         self.btn_open = QPushButton("Run browser...")
         self.btn_open.setToolTip("Show the run browser; runs open in their own windows")
         self.btn_open.clicked.connect(self.browse_runs)
 
+        self.btn_follow = QPushButton("Follow")
+        self.btn_follow.setCheckable(True)
+        self.btn_follow.setEnabled(False)
+        self.btn_follow.setToolTip("Watch this recording for new events as the run writes them")
+        self.btn_follow.toggled.connect(self.set_following)
+
+        self.follow_state = QLabel()
+        self.follow_state.setVisible(False)
+
         controls = QHBoxLayout()
         controls.addWidget(self.btn_open)
+        controls.addWidget(self.btn_follow)
         for lbl, w in (("topic", self.cb_topic), ("key", self.cb_key), ("type", self.cb_type),
                        ("seq >=", self.seq_min), ("seq <=", self.seq_max)):
             controls.addWidget(QLabel(lbl)); controls.addWidget(w)
@@ -283,6 +308,7 @@ class MainWindow(QMainWindow):
         central = QWidget(); layout = QVBoxLayout(central)
         layout.addWidget(self.meta)
         layout.addWidget(self.health)
+        layout.addWidget(self.follow_state)
         layout.addLayout(controls)
         layout.addWidget(split, 1)
         self.setCentralWidget(central)
@@ -291,7 +317,7 @@ class MainWindow(QMainWindow):
         # The window exists before any recording does, so browsing never leaves the application
         # without a window and picking a run replaces the contents rather than the window.
         if path is not None:
-            self.load(path, run)
+            self.load(path, run, follow=follow)
         else:
             self.meta.setText("No recording loaded &mdash; use <b>Open run...</b>")
 
@@ -302,19 +328,107 @@ class MainWindow(QMainWindow):
         if self._controller is not None:
             self._controller.show_browser()
 
-    def load(self, path: str, run: dict | None = None) -> None:
+    def load(self, path: str, run: dict | None = None, follow: bool = False) -> None:
+        """Open a recording. `follow` reads it through the tailer and keeps watching for more.
+
+        The two paths are deliberately distinct. A finished recording is validated against the
+        schema, which reports every defect. One still being written has no trailer yet and would
+        fail that validation for no reason, so it is read through the follower instead -- and read
+        *entirely* through it, so the initial contents and the live tail come from one position in
+        one file, with no gap or overlap between them.
+        """
+        self.set_following(False)
         self.model.clear()
-        report = er.validate(path)
-        events = list(er.read(path))
+        self._path = path
+        self._run = run
+        if follow:
+            self._follower = lt.RecordingFollower(path)
+            events = self._follower.poll()
+            report = self._report_from_follow(self._follower.stats, path)
+        else:
+            self._follower = None
+            report = er.validate(path)
+            events = list(er.read(path))
         self.model.append_events(events)
         self.proxy.sort(COL_SEQ, Qt.DescendingOrder)   # newest first
         self._populate_filters(events)
         self._show_meta(path, report, len(events))
         self._show_health(run, report, len(events))
+        self.btn_follow.setEnabled(True)
+        if follow:
+            self.set_following(True)
         # Product name first, then what this particular window holds, so several open windows are
         # still tellable apart in a taskbar that truncates.
         subject = f"{run['app']} / {run['runId']}" if run else Path(path).name
         self.setWindowTitle(f"{rb.APP_NAME} - {subject}")
+
+    # ---- live following ---------------------------------------------
+    @staticmethod
+    def _report_from_follow(stats: "lt.FollowStats", path: str) -> er.Report:
+        """Present the follower's view in the same shape the static reader returns."""
+        return er.Report(ok=stats.skipped == 0, diagnostics=[], header=stats.header,
+                         trailer=stats.trailer, event_count=stats.events,
+                         run_id=(stats.header or {}).get("runId"))
+
+    def set_following(self, on: bool) -> None:
+        """Start or stop watching the open recording for new events."""
+        if on and self._follower is None and self._path:
+            # Following was switched on for a recording opened statically: pick up from the end so
+            # the rows already shown are not delivered a second time.
+            self._follower = lt.RecordingFollower(self._path)
+            try:
+                self._follower._pos = Path(self._path).stat().st_size
+            except OSError:
+                pass
+        if on and self._follower is None:
+            return
+        if self.btn_follow.isChecked() != on:
+            self.btn_follow.blockSignals(True)
+            self.btn_follow.setChecked(on)
+            self.btn_follow.blockSignals(False)
+        if on:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self._show_follow_state()
+
+    def _poll_live(self) -> None:
+        """One tick of the follow: take whatever has been appended and show it."""
+        if self._follower is None:
+            return
+        try:
+            events = self._follower.poll()
+        except Exception as exc:            # a follow must never take the window down with it
+            print(f"follow error: {exc}", file=sys.stderr)
+            self.set_following(False)
+            return
+        if events:
+            self.model.append_events(events)
+            self._merge_filters(events)
+        if self._follower.stats.complete:
+            # The recorder wrote its trailer: there will be no more, so stop and show the final
+            # verdict from the completed recording.
+            self.set_following(False)
+            report = self._report_from_follow(self._follower.stats, self._path)
+            self._show_health(self._run, report, self.model.rowCount())
+        self._show_follow_state()
+
+    def _show_follow_state(self) -> None:
+        stats = self._follower.stats if self._follower else None
+        if stats is None:
+            self.follow_state.setVisible(False)
+            return
+        if self._timer.isActive():
+            state = "following" if not stats.missing else "waiting for the recording to appear"
+        else:
+            state = "recording complete" if stats.complete else "paused"
+        parts = [state, f"{self.model.rowCount()} rows"]
+        if stats.skipped:
+            parts.append(f"{stats.skipped} unreadable line(s)")
+        if stats.reopened:
+            parts.append(f"re-opened {stats.reopened}x")
+        self.follow_state.setText(" &mdash; ".join(parts))
+        self.follow_state.setVisible(True)
 
     def _show_health(self, run: dict | None, report: er.Report, n: int) -> None:
         """Surface the run's own verdict. Without a manifest (a bare .jsonl) fall back to the
@@ -343,18 +457,49 @@ class MainWindow(QMainWindow):
                   file=sys.stderr)
 
     def _populate_filters(self, events: list[dict]) -> None:
-        topics = sorted({e.get("topic", "") for e in events})
-        keys = sorted({e.get("key", "") for e in events})
-        types = sorted({e.get("typeId", "") for e in events})
-        max_seq = max((e.get("seq", 0) for e in events), default=0)
-        for cb, values, is_type in ((self.cb_topic, topics, False),
-                                    (self.cb_key, keys, False),
-                                    (self.cb_type, types, True)):
+        """Reset the filters for a freshly loaded recording."""
+        for cb in (self.cb_topic, self.cb_key, self.cb_type):
             cb.blockSignals(True); cb.clear(); cb.addItem("(all)", "")
-            for v in values:
-                cb.addItem(_short_type(v) if is_type else v, v)
             cb.blockSignals(False)
-        self.seq_min.setValue(0); self.seq_max.setRange(0, max(max_seq, 1)); self.seq_max.setValue(max_seq)
+        self._known = {"topic": set(), "key": set(), "typeId": set()}
+        self._seq_auto = True            # the upper bound tracks the data until the user sets one
+        self.seq_min.setValue(0)
+        self._merge_filters(events)
+
+    def _merge_filters(self, events: list[dict]) -> None:
+        """Fold newly arrived events into the filters without disturbing the user's choices.
+
+        Live events bring new topics, keys and types, and push `seq` past whatever upper bound was
+        set when the recording was first read. Rebuilding the combo boxes would throw away the
+        user's selection mid-follow, and leaving `seq_max` behind would silently filter out exactly
+        the new events they are watching for -- so entries are added, and the bound follows the data
+        until the user takes it over.
+        """
+        if not events:
+            return
+        for cb, field, is_type in ((self.cb_topic, "topic", False),
+                                   (self.cb_key, "key", False),
+                                   (self.cb_type, "typeId", True)):
+            fresh = sorted({e.get(field, "") for e in events} - self._known[field])
+            if fresh:
+                cb.blockSignals(True)     # adding items never moves currentIndex, so the choice holds
+                for v in fresh:
+                    cb.addItem(_short_type(v) if is_type else v, v)
+                cb.blockSignals(False)
+                self._known[field].update(fresh)
+
+        max_seq = max((e.get("seq", 0) for e in events), default=0)
+        if self._seq_auto and max_seq >= self.seq_max.value():
+            self.seq_max.blockSignals(True)
+            self.seq_max.setRange(0, max(max_seq, 1))
+            self.seq_max.setValue(max_seq)
+            self.seq_max.blockSignals(False)
+            self.proxy.seq_max = max_seq          # signals were blocked; tell the proxy directly
+            self.proxy.invalidateFilter()
+
+    def _on_seq_max_edited(self) -> None:
+        """The user set an upper bound, so stop moving it for them."""
+        self._seq_auto = False
 
     def _apply_filters(self) -> None:
         self.proxy.f_topic = self.cb_topic.currentData() or ""
@@ -419,10 +564,14 @@ class ViewerApp:
 
     def open_run(self, run: dict) -> None:
         """Open one run in a new window. A loose file has no manifest, so it carries no run dict."""
-        self.open_path(str(run["_events_path"]), None if run.get("_loose") else run)
+        # A run whose manifest still says 'running' is being written now, so follow it by default:
+        # that is the whole point of opening a live run.
+        follow = run.get("runStatus") == "running"
+        self.open_path(str(run["_events_path"]),
+                       None if run.get("_loose") else run, follow=follow)
 
-    def open_path(self, path: str, run: dict | None = None) -> MainWindow:
-        win = MainWindow(path, run, self.root, self)
+    def open_path(self, path: str, run: dict | None = None, follow: bool = False) -> MainWindow:
+        win = MainWindow(path, run, self.root, self, follow=follow)
         # Cascade slightly so a second window does not land exactly on the first.
         offset = 28 * (len(self.windows) % 8)
         win.move(win.x() + offset, win.y() + offset)

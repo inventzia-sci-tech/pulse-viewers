@@ -92,6 +92,21 @@ outcome stay separate and a partial capture is labelled partial. A recording ope
 Only the two columns that carry meaning are coloured: the tier (grey for `historical`, blue for
 `live`) and the health verdict. Both palettes follow the desktop theme.
 
+**Following a live run.** A run whose manifest still says `running` is being written now, so opening
+it starts following: new events are taken up as they arrive, the filters grow with them, and the
+follow stops by itself when the recorder writes its trailer. `Follow` pauses and resumes it, and any
+finished recording can be followed on demand. The status line reports rows, unreadable lines and
+re-opens, so a lossy or damaged tail is visible rather than silent. The reader
+(`live_tail.py`, Qt-free) handles a partial trailing line, truncation, rotation and malformed
+records — see `viewer.md` section 5.
+
+**Engine lifecycle in the stream.** When a run records the engine's status topic, its transitions
+(`BLANK -> INITIALIZED`, `PRESTART -> STARTED`, ... `STOPPED -> COMPLETE`, for the engine and each
+gateway) arrive as ordinary `EngineStatus` events, filterable and colourable like any other type.
+
+**Deleting a run.** `Delete run...` removes the selected run directory after confirming. It refuses
+anything that is not a `tier/app/runId` directory inside the output root.
+
 The output root can be chosen in the browser itself (`Change output folder...`) and is remembered
 between sessions, so nothing has to be configured before the first launch; a remembered choice takes
 precedence over `$PULSE_OUTPUT`, and an explicit `--root` over both. `Open recording file...` opens a

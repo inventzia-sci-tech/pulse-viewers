@@ -160,6 +160,27 @@ def describe(run: dict) -> str:
     return ", ".join(parts)
 
 
+def delete_run(run: dict, root: str | Path | None = None) -> None:
+    """Delete one run directory and everything in it. Irreversible.
+
+    Refuses anything that is not a run directory strictly inside the output root, so a malformed
+    entry can never turn into a recursive delete somewhere else. The caller is responsible for
+    asking the user first.
+    """
+    import shutil
+
+    base = Path(resolve_root(root)).resolve()
+    target = Path(run["dir"]).resolve()
+    if not rl._is_within(base, target):
+        raise ValueError(f"refusing to delete outside the output root: {target}")
+    if target == base or len(target.relative_to(base).parts) != 3:
+        # tier/app/runId, exactly: never a tier or an application directory.
+        raise ValueError(f"not a run directory: {target}")
+    if not target.is_dir():
+        raise FileNotFoundError(target)
+    shutil.rmtree(target)
+
+
 def load_runs(root: str | Path | None = None) -> list[dict]:
     """Every run under the root, newest first, annotated for display.
 
@@ -198,11 +219,11 @@ def _qt():
     from PySide6.QtCore import Qt, QSettings  # noqa: F401
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog,
-                                   QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
-                                   QTableWidgetItem, QVBoxLayout)
+                                   QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
+                                   QTableWidget, QTableWidgetItem, QVBoxLayout)
     return (Qt, QSettings, QColor, QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog,
-            QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
-            QVBoxLayout)
+            QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
+            QTableWidgetItem, QVBoxLayout)
 
 
 # The product name, shown on every window. Defined here because it belongs to the application as a
@@ -254,7 +275,7 @@ def make_browser(root=None, parent=None, on_open=None):
     most recently opened run.
     """
     (Qt, QSettings, QColor, QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog,
-     QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
+     QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
      QVBoxLayout) = _qt()
 
     class RunBrowserWindow(QDialog):
@@ -296,6 +317,10 @@ def make_browser(root=None, parent=None, on_open=None):
             open_file.clicked.connect(self._open_loose_file)
             refresh = QPushButton("Refresh")
             refresh.clicked.connect(self.reload)
+            self.btn_delete = QPushButton("Delete run...")
+            self.btn_delete.setToolTip("Permanently delete the selected run directory")
+            self.btn_delete.setEnabled(False)
+            self.btn_delete.clicked.connect(self.delete_current)
 
             # "Close" rather than "Cancel": closing the browser dismisses this window only, and
             # leaves any viewer windows already opened from it alone.
@@ -310,6 +335,7 @@ def make_browser(root=None, parent=None, on_open=None):
             bar.addWidget(change_root)
             bar.addWidget(open_file)
             bar.addWidget(refresh)
+            bar.addWidget(self.btn_delete)
             bar.addStretch(1)
             bar.addWidget(self.buttons)
 
@@ -360,6 +386,7 @@ def make_browser(root=None, parent=None, on_open=None):
             n = len(self._runs)
             self.header.setText(f"<b>{self._root}</b> &mdash; {n} run{'s' if n != 1 else ''}")
             self.buttons.button(QDialogButtonBox.Open).setEnabled(False)
+            self.btn_delete.setEnabled(False)
             if n:
                 self.detail.setText("select a run")
             else:
@@ -406,6 +433,30 @@ def make_browser(root=None, parent=None, on_open=None):
             self.detail.setText(f"<b>{verdict}</b> &mdash; {why}<br>{describe(run)}"
                                 + ("" if openable else "<br><i>no events to open</i>"))
             self.buttons.button(QDialogButtonBox.Open).setEnabled(openable)
+            self.btn_delete.setEnabled(True)      # any listed run can be deleted, damaged included
+
+        def delete_current(self) -> None:
+            """Delete the selected run, after saying plainly what is about to be destroyed."""
+            run = self.current_run()
+            if run is None:
+                return
+            running = run.get("runStatus") == "running"
+            note = ("<br><br><b>This run appears to be still running.</b> Deleting it now will "
+                    "pull the files out from under the engine that is writing them.") if running else ""
+            answer = QMessageBox.warning(
+                self, "Delete run",
+                f"Permanently delete this run and everything in it?<br><br>"
+                f"<b>{run.get('app', '?')} / {run.get('runId', '?')}</b><br>"
+                f"<code>{run.get('dir', '?')}</code>{note}<br><br>This cannot be undone.",
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                delete_run(run, self._root)
+            except Exception as exc:
+                QMessageBox.critical(self, "Delete failed", f"Could not delete the run:\n{exc}")
+                return
+            self.reload()
 
         def open_current(self) -> None:
             """Hand the selected run to the application. The browser deliberately stays open."""
