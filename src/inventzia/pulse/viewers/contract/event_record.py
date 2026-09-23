@@ -188,6 +188,21 @@ def _check_record(rec: Any) -> str | None:
     return None
 
 
+SCHEMA_RESOURCE = "event-record.schema.json"
+
+
+def load_schema() -> dict:
+    """The record schema, read as package data so it works from an installed wheel.
+
+    A source-tree path would break the moment the package is installed, which is exactly when
+    validation matters most.
+    """
+    from importlib import resources
+
+    with resources.files(__package__).joinpath(SCHEMA_RESOURCE).open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _record_checker(schema: dict | None):
     """Return a ``rec -> error-or-None`` function. Uses the JSON Schema via jsonschema when available
     (the authoritative check), else the structural fallback. Never raises on a bad record."""
@@ -196,9 +211,7 @@ def _record_checker(schema: dict | None):
     except ImportError:
         return _check_record
     if schema is None:
-        schema_path = Path(__file__).resolve().parent.parent / "schema" / "event-record.schema.json"
-        with open(schema_path, encoding="utf-8") as fh:
-            schema = json.load(fh)
+        schema = load_schema()
     full = jsonschema.Draft202012Validator(schema)
     # Per-kind validators give a precise field message instead of the whole-record "not valid under
     # any of the given schemas" that the top-level oneOf would produce.

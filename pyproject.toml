@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-Inventzia-Commercial
+# Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
+#
+# This file is part of pulse-viewers.
+#
+# pulse-viewers is dual-licensed:
+#   - Under the GNU Affero General Public License v3.0 or later (see LICENSE-AGPL-3.0).
+#   - Under a commercial license (see LICENSE-COMMERCIAL.txt).
+#     Contact operations@inventzia.com.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulse-viewers"
+version = "0.1.0"
+description = "Desktop viewers over the runs a Pulse application records: browse runs by health and follow a live one as it is written."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later OR LicenseRef-Inventzia-Commercial"
+license-files = ["LICENSE-AGPL-3.0", "LICENSE-COMMERCIAL.txt", "NOTICE"]
+authors = [
+    { name = "Magrino Bini", email = "operations@inventzia.com" },
+    { name = "Paola Apruzzese", email = "operations@inventzia.com" },
+]
+maintainers = [
+    { name = "Inventzia Science and Technology Ltd.", email = "operations@inventzia.com" },
+]
+keywords = ["pulse", "event-driven", "viewer", "observability", "event-processing", "jsonl", "qt", "pyside6"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Operating System :: OS Independent",
+]
+
+# Deliberately independent of pulse-data and pulse-beacon. A viewer reads the artifacts a run
+# leaves behind -- JSONL and a JSON manifest -- and never links the engine, so it needs neither the
+# datum types nor a JVM. That keeps this wheel small and lets the viewer version on its own cadence.
+dependencies = [
+    "PySide6>=6.6",
+    "jsonschema>=4.0",
+]
+
+[project.scripts]
+pulse-events-viewer = "inventzia.pulse.viewers.event_viewer:main"
+
+[project.urls]
+Homepage = "https://inventzia.com"
+Repository = "https://github.com/inventzia-sci-tech/pulse-viewers"
+Changelog = "https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/CHANGELOG.md"
+
+# src/ layout, PEP 420 namespace packages -- no __init__.py at inventzia/ or inventzia/pulse/, so
+# this shares the inventzia.pulse.* namespace with pulse-data and pulse-beacon and installs
+# alongside them. See pulse-beacon/pyproject.toml.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["inventzia*"]
+namespaces = true
+
+# The record schema travels with the code that validates against it: a source-tree path would not
+# survive installation, and validation matters most against an installed artifact.
+[tool.setuptools.package-data]
+"inventzia.pulse.viewers.contract" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -39,44 +39,55 @@ or failed recording as such, never present it as complete.
 
 ## Shared contents
 
-- `schema/`: the authoritative contracts (JSON Schema 2020-12). Currently
-  `event-record.schema.json`, the record kinds `header` / `event` / `trailer`.
+Everything installable lives under `src/inventzia/pulse/viewers/`, a PEP 420 namespace package
+alongside `inventzia.pulse.data` and `inventzia.pulse.beacon`.
+
 - `run_browser.py`: the run picker, shared by every viewer — choosing a run is not specific to any
   one of them. Lists what `list_runs()` finds under the output root and classifies each run's health
   (`ok` / `partial` / `broken` / `running` / `unknown`) from its manifest, keeping the engine outcome
-  and the recording outcome separate. Run it directly (`python run_browser.py [--root PATH]`) for a
-  console listing with no Qt needed.
-- `reference/run_layout.py`: the Pulse output layout in one place — resolve `$PULSE_OUTPUT`, create
+  and the recording outcome separate. Its logic half imports no Qt, so
+  `python -m inventzia.pulse.viewers.run_browser [--root PATH]` gives a console listing anywhere.
+- `live_tail.py`: the reader for a recording still being written — partial trailing line,
+  truncation, rotation, malformed records. Qt-free, so it can be driven by a timer or a test.
+- `contract/run_layout.py`: the Pulse output layout in one place — resolve `$PULSE_OUTPUT`, create
   and finalize run directories, read manifests, and `list_runs()` to enumerate every run under the
   root, newest first. The Java mirror of this lives in pulse-beacon as `RunLayout`; the two are kept
   byte-for-byte compatible.
-- `reference/event_record.py`: the Python side of the recording contract — build, write, read and
+- `contract/event_record.py`: the Python side of the recording contract — build, write, read and
   validate records, plus `make_sample()` to emit a demo recording so a viewer can be developed
   without a JVM.
-- `py_environment.yml`: enrichment layer for the shared `pulse` conda env (same pattern as
-  pulse-beacon), adding only the viewers' extra packages.
-- `requirements.txt`: the same dependencies (`PySide6`, `jsonschema`) for a plain `pip` install.
+- `contract/event-record.schema.json`: the authoritative record contract (JSON Schema 2020-12), the
+  kinds `header` / `event` / `trailer`. Shipped as package data so validation works from an
+  installed wheel.
 
 ## Install
 
 ```bash
-conda env update -f py_environment.yml     # enrich the shared `pulse` env
-# or
-pip install -r requirements.txt
+pip install pulse-viewers
 ```
+
+Or from a checkout, for development:
+
+```bash
+pip install -e .              # plus `pytest` to run the suite
+conda env update -f py_environment.yml     # or enrich the shared `pulse` conda env
+```
+
+pulse-viewers depends on **neither pulse-data nor pulse-beacon**: a viewer reads a run's artifacts
+as plain JSON and never links the engine, so the only dependencies are PySide6 and jsonschema.
 
 ---
 
 # Viewers
 
-## Events Viewer (`event_viewer.py`)
+## Events Viewer (`pulse-events-viewer`)
 
 Reads one run's event recording and shows the dispatch stream.
 
 ```bash
-python event_viewer.py                     # browse $PULSE_OUTPUT and pick a run
-python event_viewer.py --root PATH         # browse a specific output root
-python event_viewer.py recording.jsonl     # open one recording directly
+pulse-events-viewer                     # browse $PULSE_OUTPUT and pick a run
+pulse-events-viewer --root PATH         # browse a specific output root
+pulse-events-viewer recording.jsonl     # open one recording directly
 ```
 
 With no argument it opens the **run browser**, which is the application's hub rather than a one-shot
@@ -119,8 +130,8 @@ header to sort (sorting by `type` groups by type and orders by `seq` within). Bo
 batched inserts, and lazy payload parsing are in place for the larger recordings of later phases.
 
 There is no synthetic fallback: if a recording is needed without a JVM, generate one explicitly with
-`python reference/event_record.py`, which writes into the platform's temp directory (pass a path to
-choose your own).
+`python -m inventzia.pulse.viewers.contract.event_record`, which writes into the platform's temp
+directory (pass a path to choose your own).
 
 ### The recording contract
 
@@ -140,14 +151,14 @@ parsing the payload; unknown types stay fully inspectable as generic JSON.
 **Python (no JVM), for viewer development:**
 
 ```bash
-python reference/event_record.py [outfile.jsonl]   # defaults to the platform temp directory
+python -m inventzia.pulse.viewers.contract.event_record [outfile.jsonl]
 ```
 
 **Java:** the recorder now ships in pulse-beacon as
 `com.inventzia.pulse.beacon.core.gateway.recording.EventRecorderGateway`, driven by the launcher-side
 `run` package, so a normal run writes its recording into the output layout with no extra wiring.
-`reference/EventRecorderGateway.java` is the original draft, kept for reference only — pulse-beacon
-is authoritative and the two have diverged.
+`reference/EventRecorderGateway.java` is the original draft, kept outside the package for reference
+only — pulse-beacon is authoritative and the two have diverged.
 
 Two limits remain while the recorder is a subscriber sink rather than an engine tap (Stage A):
 
@@ -172,6 +183,26 @@ left unchanged (backward compatible); recording is a new, separate writer.
 `recording contract -> offline viewer -> run browser -> live file following`. Done through the run
 browser; next is phase 3, live file following (tail a recording as it is written) with the reader
 contract from viewer.md section 5.
+
+---
+
+## Development
+
+```bash
+pip install -e . pytest
+pytest                      # Qt runs offscreen; conftest.py sets QT_QPA_PLATFORM
+```
+
+The suite is built around a corpus of deliberately **damaged** runs — a crashed engine, a failed
+recorder, a lossy capture, counts that contradict themselves, a run that never finalized, one with
+no manifest, one with no events at all. A viewer's job is to open the run someone is worried about,
+so those are the cases worth testing; two healthy runs would prove very little. Colour is checked by
+measuring WCAG contrast in both light and dark palettes rather than by eye, and live following is
+driven against a file being written underneath the reader.
+
+CI runs the suite on Python 3.11 and 3.12, then builds the distribution and smoke-tests the
+installed wheel from a directory with no source tree in sight — so an accidental source-path
+dependency fails there rather than in someone's install.
 
 ---
 

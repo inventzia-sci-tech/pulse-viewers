@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-Inventzia-Commercial
 # Copyright (c) 2013-2026 Magrino Bini, Paola Apruzzese, Inventzia Science and Technology Ltd.
-"""Pulse Events Viewer, phase 2 (offline).
+"""Pulse Events Viewer.
 
 One of the viewers hosted in pulse-viewers; this one reads the event recording a Pulse run writes.
-Reads a completed recording (JSONL, see schema/event-record.schema.json), validates it against the
-contract, and shows the events in a sortable, filterable grid with per-type colour and a payload
-detail tree. Qt only; no engine, no JVM, no domain adapters. Live following is phase 3.
+It validates the recording against the record schema (packaged in `contract/`) and shows the events
+in a sortable, filterable grid with per-type colour and a payload detail tree. Qt only; no engine,
+no JVM, no domain adapters.
 
 With no argument it opens the run browser over the Pulse output root, so a run is chosen by what it
-is rather than by remembering a path. A run's health travels with it into the header bar: the engine
-outcome and the recording outcome stay separate, and a partial capture is labelled as partial.
+is rather than by remembering a path, and each run opens in its own window. A run's health travels
+into the header bar: the engine outcome and the recording outcome stay separate, and a partial
+capture is labelled as partial. A run still being written is followed as it grows.
 
-    python event_viewer.py                    # browse $PULSE_OUTPUT
-    python event_viewer.py --root PATH        # browse a specific output root
-    python event_viewer.py recording.jsonl    # open one recording directly
+usage:
+    pulse-events-viewer                    # browse $PULSE_OUTPUT (or the remembered folder)
+    pulse-events-viewer --root PATH        # browse a specific output root
+    pulse-events-viewer recording.jsonl    # open one recording directly
+    pulse-events-viewer --help             # this message
 """
 
 from __future__ import annotations
@@ -24,11 +27,9 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "reference"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import event_record as er  # noqa: E402
-import live_tail as lt  # noqa: E402
-import run_browser as rb  # noqa: E402
+from inventzia.pulse.viewers import live_tail as lt
+from inventzia.pulse.viewers import run_browser as rb
+from inventzia.pulse.viewers.contract import event_record as er
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt,  # noqa: E402
                             QTimer)
@@ -489,13 +490,20 @@ class MainWindow(QMainWindow):
                 self._known[field].update(fresh)
 
         max_seq = max((e.get("seq", 0) for e in events), default=0)
-        if self._seq_auto and max_seq >= self.seq_max.value():
+        # The selectable range always follows the data, even when the user owns the value: capping
+        # it at the maximum seen when they set a bound would make that bound impossible to widen
+        # afterwards, which is precisely when new events are arriving.
+        if max_seq >= self.seq_max.maximum():
             self.seq_max.blockSignals(True)
             self.seq_max.setRange(0, max(max_seq, 1))
+            self.seq_max.blockSignals(False)
+        # The value only follows while it is still the viewer's to move.
+        if self._seq_auto and max_seq >= self.seq_max.value():
+            self.seq_max.blockSignals(True)
             self.seq_max.setValue(max_seq)
             self.seq_max.blockSignals(False)
             self.proxy.seq_max = max_seq          # signals were blocked; tell the proxy directly
-            self.proxy.invalidateFilter()
+            self.proxy.invalidate()   # the invalidate*Filter variants are deprecated in PySide6 6.11
 
     def _on_seq_max_edited(self) -> None:
         """The user set an upper bound, so stop moving it for them."""
@@ -508,7 +516,7 @@ class MainWindow(QMainWindow):
         self.proxy.f_text = self.txt.text()
         self.proxy.seq_min = self.seq_min.value()
         self.proxy.seq_max = self.seq_max.value()
-        self.proxy.invalidateFilter()
+        self.proxy.invalidate()   # the invalidate*Filter variants are deprecated in PySide6 6.11
 
     def _on_select(self) -> None:
         idx = self.table.selectionModel().currentIndex()
@@ -588,6 +596,10 @@ class ViewerApp:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv and argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
     root: str | None = None
     if argv and argv[0] == "--root":
         if len(argv) < 2:

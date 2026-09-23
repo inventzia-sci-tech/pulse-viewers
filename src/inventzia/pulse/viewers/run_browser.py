@@ -19,8 +19,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "reference"))
-import run_layout as rl  # noqa: E402
+from inventzia.pulse.viewers.contract import run_layout as rl
 
 # Health verdicts, worst first. A viewer uses these to colour a run and to warn about a recording
 # it should not present as complete.
