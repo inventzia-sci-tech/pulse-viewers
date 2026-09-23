@@ -7,7 +7,36 @@ Viewing utilities for Pulse applications.
 This repository hosts the viewers built over the artifacts a Pulse run leaves behind. It is a home
 for several of them; today it holds one, the **Events Viewer**, with the shared contracts and
 readers that any further viewer builds on. The design rationale is in
-[`../viewer.md`](../viewer.md).
+[`docs/viewer.md`](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/docs/viewer.md).
+
+![The run browser listing runs by health, and a run's event stream open in its own
+window](https://raw.githubusercontent.com/inventzia-sci-tech/pulse-viewers/main/docs/pulse-events-viewer.png)
+
+*The run browser (top) lists every run under the output root with its health verdict; each run opens
+in its own window (bottom). Here a real-time run shows its two heartbeats, an actor's echo, and the
+engine's own lifecycle — `EngineStatus` events on `engine.status` — interleaved in one stream,
+coloured by type.*
+
+## Quickstart
+
+```bash
+pip install pulse-viewers
+pulse-events-viewer
+```
+
+That opens the **run browser**. Point it at your Pulse output folder with `Change output folder...`
+— it remembers the choice — or set `PULSE_OUTPUT` beforehand. Runs appear newest first with their
+health; pick one and it opens in its own window. A run still being written is followed live.
+
+**No Pulse runs yet?** The viewer works on any recording, and one can be generated without a JVM:
+
+```bash
+python -m inventzia.pulse.viewers.contract.event_record /tmp/sample.jsonl
+pulse-events-viewer /tmp/sample.jsonl
+```
+
+**Requirements:** Python 3.11+ and a desktop session (the viewer is a Qt application). It needs
+neither a JVM nor pulse-beacon — it reads what a run has already written.
 
 ## What a Pulse viewer is
 
@@ -20,7 +49,7 @@ never points that way.
 
 **2. A viewer reads a run's recorded artifacts, not the engine's internals or its human logs.** So
 the artifact format is the real interface, and it comes first. Each run writes a standardized
-directory (see [`../pulse-output.md`](../pulse-output.md)):
+directory (see [`pulse-output.md`](https://github.com/inventzia-sci-tech/pulse-beacon/blob/main/docs/pulse-output.md)):
 
 ```
 $PULSE_OUTPUT/<tier>/<app>/<runId>/
@@ -109,7 +138,7 @@ follow stops by itself when the recorder writes its trailer. `Follow` pauses and
 finished recording can be followed on demand. The status line reports rows, unreadable lines and
 re-opens, so a lossy or damaged tail is visible rather than silent. The reader
 (`live_tail.py`, Qt-free) handles a partial trailing line, truncation, rotation and malformed
-records — see `viewer.md` section 5.
+records — see [`docs/viewer.md`](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/docs/viewer.md) section 5.
 
 **Engine lifecycle in the stream.** When a run records the engine's status topic, its transitions
 (`BLANK -> INITIALIZED`, `PRESTART -> STARTED`, ... `STOPPED -> COMPLETE`, for the engine and each
@@ -182,7 +211,7 @@ left unchanged (backward compatible); recording is a new, separate writer.
 
 `recording contract -> offline viewer -> run browser -> live file following`. Done through the run
 browser; next is phase 3, live file following (tail a recording as it is written) with the reader
-contract from viewer.md section 5.
+contract from [`docs/viewer.md`](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/docs/viewer.md) section 5.
 
 ---
 
@@ -208,11 +237,11 @@ dependency fails there rather than in someone's install.
 
 ## License
 
-Dual-licensed: GNU Affero General Public License v3.0 (see [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0)) or
+Dual-licensed: GNU Affero General Public License v3.0 (see [LICENSE-AGPL-3.0](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/LICENSE-AGPL-3.0)) or
 a commercial license from Inventzia Science and Technology Ltd. (see
-[LICENSE-COMMERCIAL.txt](LICENSE-COMMERCIAL.txt) and [COMMERCIAL.md](COMMERCIAL.md)).
+[LICENSE-COMMERCIAL.txt](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/LICENSE-COMMERCIAL.txt) and [COMMERCIAL.md](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/COMMERCIAL.md)).
 
-Third-party components are recorded in [NOTICE](NOTICE). **Packaging note:** PySide6 is LGPL, and
+Third-party components are recorded in [NOTICE](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/NOTICE). **Packaging note:** PySide6 is LGPL, and
 those obligations attach only to *distributing* it — declaring it as a dependency (a wheel on PyPI, a
 conda recipe) ships a name, not the library, so nothing is owed; bundling Qt's binaries into a frozen
 build (PyInstaller and friends) does convey it, and then the licence texts, the notice, and the
@@ -220,5 +249,5 @@ recipient's right to relink against their own Qt all apply. Also prefer non-Qt c
 matplotlib): some Qt modules, Qt Charts among them, are GPL-or-commercial rather than LGPL, and GPL
 would reach our own code.
 
-Contributions require a DCO sign-off (`git commit -s`); see [CLA.md](CLA.md). Security reports:
-[SECURITY.md](SECURITY.md).
+Contributions require a DCO sign-off (`git commit -s`); see [CLA.md](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/CLA.md). Security reports:
+[SECURITY.md](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/SECURITY.md).
