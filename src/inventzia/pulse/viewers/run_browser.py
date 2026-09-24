@@ -112,12 +112,23 @@ def lost_events(counts: dict | None) -> int:
         return 0
 
 
-def health(run: dict) -> tuple[str, str]:
+def health(run: dict, validation_issues: int = 0) -> tuple[str, str]:
     """Classify a run from its manifest. Returns (verdict, one-line explanation).
 
     The two statuses are read independently on purpose: "the run failed" and "the recording is
     incomplete" are different facts, and a viewer that collapses them misleads.
+
+    `validation_issues` is how many ways the recording failed to match its own contract, for a
+    caller that has actually read it (the browser only reads manifests, so it passes none). A
+    manifest can claim a clean run while the file it describes disagrees with itself — a trailer
+    counting more events than the file contains, say. The manifest is not evidence about the
+    recording's contents, so a recording that contradicts itself is broken whatever the manifest
+    says, and must never show as `ok`.
     """
+    if validation_issues:
+        return BROKEN, (f"the recording does not match its own contract "
+                        f"({validation_issues} validation issue(s)); treat it as unreliable")
+
     run_status = run.get("runStatus")
     rec_status = run.get("recordingStatus")
     counts = run.get("counts")

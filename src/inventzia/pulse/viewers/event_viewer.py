@@ -24,12 +24,14 @@ from __future__ import annotations
 import colorsys
 import json
 import sys
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
 from inventzia.pulse.viewers import live_tail as lt
 from inventzia.pulse.viewers import run_browser as rb
 from inventzia.pulse.viewers.contract import event_record as er
+from inventzia.pulse.viewers.contract import run_layout as rl
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt,  # noqa: E402
                             QTimer)
@@ -41,6 +43,11 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 POLL_MS = 400          # how often a followed recording is checked for new bytes
+
+# The recorder's trailer and the launcher finalizing the manifest are separate steps, so a finished
+# recording can briefly still read as "running". Watch for the manifest to settle, but not for ever.
+FINALIZE_POLL_MS = 400
+FINALIZE_TIMEOUT_SECONDS = 15.0
 
 COLUMNS = ["seq", "observed", "event time", "key", "topic", "type", "payload"]
 COL_SEQ, COL_OBSERVED, COL_EVENTTIME, COL_KEY, COL_TOPIC, COL_TYPE, COL_PAYLOAD = range(7)
@@ -99,6 +106,11 @@ class EventTableModel(QAbstractTableModel):
     def append_events(self, events: list[dict]) -> None:
         if not events:
             return
+        # A batch larger than the bound must be trimmed first, or the bound is advisory only:
+        # trimming existing rows cannot help when the incoming batch alone exceeds it, and opening a
+        # large recording arrives as one batch.
+        if len(events) > self._max_rows:
+            events = events[-self._max_rows:]        # keep the most recent, as retention intends
         # bounded retention: keep the most recent max_rows
         overflow = len(self._rows) + len(events) - self._max_rows
         if overflow > 0:
@@ -243,6 +255,10 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
         self._timer.timeout.connect(self._poll_live)
+        self._finalize_timer = QTimer(self)
+        self._finalize_timer.setInterval(FINALIZE_POLL_MS)
+        self._finalize_timer.timeout.connect(self._check_finalized)
+        self._finalize_deadline = 0.0
 
         self.model = EventTableModel()
         self.proxy = EventFilterProxy()
@@ -339,6 +355,7 @@ class MainWindow(QMainWindow):
         one file, with no gap or overlap between them.
         """
         self.set_following(False)
+        self._finalize_timer.stop()      # a previous run's finalization is no longer of interest
         self.model.clear()
         self._path = path
         self._run = run
@@ -407,12 +424,62 @@ class MainWindow(QMainWindow):
             self.model.append_events(events)
             self._merge_filters(events)
         if self._follower.stats.complete:
-            # The recorder wrote its trailer: there will be no more, so stop and show the final
-            # verdict from the completed recording.
+            # The recorder wrote its trailer: there will be no more events, so stop following and
+            # show the final verdict. The manifest this window opened with said "running"; it is now
+            # stale, so re-read it rather than freezing that verdict for ever.
             self.set_following(False)
-            report = self._report_from_follow(self._follower.stats, self._path)
-            self._show_health(self._run, report, self.model.rowCount())
+            self._refresh_verdict()
+            # The trailer and the launcher's finalization are separate steps: the recorder stops
+            # first, and the manifest can still say "running" for a moment afterwards. Watch for it
+            # instead of leaving a RUNNING badge on a finished run.
+            if self._run is not None and self._run.get("runStatus") == "running":
+                self._finalize_deadline = time.monotonic() + FINALIZE_TIMEOUT_SECONDS
+                self._finalize_timer.start()
         self._show_follow_state()
+
+    def _reread_run(self) -> dict | None:
+        """Re-read this run's manifest from disk, keeping the annotations load() was given."""
+        if not self._run:
+            return None
+        directory = self._run.get("dir")
+        if not directory:
+            return None                      # a loose recording has no manifest to re-read
+        try:
+            manifest = rl.read_manifest(directory)
+        except Exception:
+            return None
+        if not manifest:
+            return None
+        fresh = dict(self._run)
+        fresh.update(manifest)
+        return fresh
+
+    def _refresh_verdict(self) -> None:
+        """Show the verdict for the run as it stands now, from disk.
+
+        Re-validates the file as well as re-reading the manifest: while following, health came from
+        the follower's running tally, which cannot see a trailer that disagrees with the events
+        before it. Now that the recording is complete, the real check is affordable and is the one
+        that counts.
+        """
+        fresh = self._reread_run()
+        if fresh is not None:
+            self._run = fresh
+        try:
+            report = er.validate(self._path)
+        except Exception:
+            report = self._report_from_follow(
+                self._follower.stats if self._follower else lt.FollowStats(), self._path)
+        self._show_health(self._run, report, self.model.rowCount())
+
+    def _check_finalized(self) -> None:
+        """Poll for the launcher finishing the manifest, then stop watching."""
+        fresh = self._reread_run()
+        settled = fresh is not None and fresh.get("runStatus") != "running"
+        if settled or time.monotonic() >= self._finalize_deadline:
+            self._finalize_timer.stop()
+            if settled:
+                self._refresh_verdict()
 
     def _show_follow_state(self) -> None:
         stats = self._follower.stats if self._follower else None
@@ -443,7 +510,9 @@ class MainWindow(QMainWindow):
                       ("observed", "events", "overflow", "serializationErrors", "abandoned")}
             run = {"runStatus": "completed", "recordingStatus": trailer.get("status"),
                    "counts": counts, "_has_manifest": True}
-        verdict, why = rb.health(run)
+        # The manifest describes the run; the diagnostics describe the file actually on disk. A
+        # recording that contradicts its own trailer is unreliable however healthy the manifest looks.
+        verdict, why = rb.health(run, validation_issues=len(report.diagnostics))
         bg, fg = rb.verdict_colors(verdict)
         badge = "background:#%02X%02X%02X; color:#%02X%02X%02X" % (*bg, *fg)
         self.health.setText(
