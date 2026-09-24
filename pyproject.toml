@@ -55,6 +55,8 @@ pulse-events-viewer = "inventzia.pulse.viewers.event_viewer:main"
 
 [project.urls]
 Homepage = "https://inventzia.com"
+"Pulse ecosystem" = "https://github.com/inventzia-sci-tech/pulse-beacon/blob/main/docs/pulse-ecosystem.md"
+Documentation = "https://github.com/inventzia-sci-tech/pulse-viewers#readme"
 Repository = "https://github.com/inventzia-sci-tech/pulse-viewers"
 Changelog = "https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/CHANGELOG.md"
 

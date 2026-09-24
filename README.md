@@ -17,6 +17,24 @@ in its own window (bottom). Here a real-time run shows its two heartbeats, an ac
 engine's own lifecycle — `EngineStatus` events on `engine.status` — interleaved in one stream,
 coloured by type.*
 
+## Part of the Inventzia Pulse ecosystem
+
+Pulse provides typed events, an event-driven engine for replay, simulation and real-time
+applications, and desktop tools for inspecting recorded runs. Use the components you need.
+
+| Package | Purpose | Choose it when… |
+| --- | --- | --- |
+| [`pulse-data`](https://pypi.org/project/pulse-data/) | Shared typed events, schemas and serialization for Python and Java | You need Pulse data types or want to define extensions |
+| [`pulse-beacon`](https://pypi.org/project/pulse-beacon/) | Event-driven execution with Python/Java interoperability and run recording | You want to build and run an application |
+| [`pulse-viewers`](https://pypi.org/project/pulse-viewers/) | Desktop tools for browsing runs and inspecting recorded events | You want to examine or follow a recording |
+
+Beacon depends on Data; Viewers reads Beacon's recorded files and can run independently, including on
+another machine — which is why Data and Beacon release together on one version while Viewers versions
+on its own.
+
+**New to Pulse?** The [ecosystem overview](https://github.com/inventzia-sci-tech/pulse-beacon/blob/main/docs/pulse-ecosystem.md)
+has a quickstart that runs an example and opens its recording.
+
 ## Quickstart
 
 ```bash
@@ -37,6 +55,21 @@ pulse-events-viewer /tmp/sample.jsonl
 
 **Requirements:** Python 3.11+ and a desktop session (the viewer is a Qt application). It needs
 neither a JVM nor pulse-beacon — it reads what a run has already written.
+
+## Installing the other components
+
+```bash
+# Build and run applications from Python; installs pulse-data too.
+# Requires Java 17+.
+pip install "pulse-beacon[jpype]"
+
+# Inspect recordings on a desktop; no Java required.
+pip install pulse-viewers
+pulse-events-viewer
+
+# Use only the shared event types and serialization.
+pip install pulse-data
+```
 
 ## What a Pulse viewer is
 
@@ -89,13 +122,7 @@ alongside `inventzia.pulse.data` and `inventzia.pulse.beacon`.
   kinds `header` / `event` / `trailer`. Shipped as package data so validation works from an
   installed wheel.
 
-## Install
-
-```bash
-pip install pulse-viewers
-```
-
-Or from a checkout, for development:
+## Install from a checkout
 
 ```bash
 pip install -e .              # plus `pytest` to run the suite
@@ -209,9 +236,11 @@ left unchanged (backward compatible); recording is a new, separate writer.
 
 ### Next
 
-`recording contract -> offline viewer -> run browser -> live file following`. Done through the run
-browser; next is phase 3, live file following (tail a recording as it is written) with the reader
-contract from [`docs/viewer.md`](https://github.com/inventzia-sci-tech/pulse-viewers/blob/main/docs/viewer.md) section 5.
+`recording contract -> offline viewer -> run browser -> live file following` is **done**, through
+live following. What comes next is driven by what the recording itself can offer: pulse-beacon's
+Stage B engine event tap will give a global dispatch sequence across all routes, replacing the
+selected-routes, recorder-local sequence this version reads (both declared in every `run.json`, so
+the viewer already reports which it is looking at).
 
 ---
 
